@@ -2,10 +2,14 @@ package org.jeecg.common.util;
 
 import cn.hutool.crypto.SecureUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.jeecg.common.constant.SymbolConstant;
 import org.jeecg.common.exception.JeecgBootException;
+import org.jeecg.common.exception.JeecgSqlInjectionException;
+
 import javax.servlet.http.HttpServletRequest;
 import java.lang.reflect.Field;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -20,7 +24,7 @@ public class SqlInjectionUtil {
 	 * （上线修改值 20200501，同步修改前端的盐值）
 	 */
 	private final static String TABLE_DICT_SIGN_SALT = "20200501";
-	private final static String XSS_STR = "and |exec |insert |select |delete |update |drop |count |chr |mid |master |truncate |char |declare |;|or |+|user()";
+	private final static String XSS_STR = "and |extractvalue|updatexml|geohash|gtid_subset|gtid_subtract|exec |insert |select |delete |update |drop |count |chr |mid |master |truncate |char |declare |;|or |+|user()";
 
 	/**
 	 * 正则 user() 匹配更严谨
@@ -30,13 +34,23 @@ public class SqlInjectionUtil {
 	private final static String SHOW_TABLES = "show\\s+tables";
 
 	/**
+	 * sleep函数
+	 */
+	private final static Pattern FUN_SLEEP = Pattern.compile("sleep\\(.*\\)", Pattern.CASE_INSENSITIVE);
+
+	/**
+	 * sql注释的正则
+	 */
+	private final static Pattern SQL_ANNOTATION = Pattern.compile("/\\*[\\s\\S]*\\*/");
+
+	/**
 	 * 针对表字典进行额外的sign签名校验（增加安全机制）
 	 * @param dictCode:
 	 * @param sign:
 	 * @param request:
 	 * @Return: void
 	 */
-	public static void checkDictTableSign(String dictCode, String sign, HttpServletRequest request) {
+	private static void checkDictTableSign(String dictCode, String sign, HttpServletRequest request) {
 		//表字典SQL注入漏洞,签名校验
 		String accessToken = request.getHeader("X-Access-Token");
 		String signStr = dictCode + SqlInjectionUtil.TABLE_DICT_SIGN_SALT + accessToken;
@@ -49,11 +63,72 @@ public class SqlInjectionUtil {
 	}
 
 	/**
+	 * 返回查询表名
+	 * <p>
 	 * sql注入过滤处理，遇到注入关键字抛异常
-	 * @param value
+	 *
+	 * @param table
 	 */
-	public static void filterContent(String value) {
-		filterContent(value, null);
+	private static Pattern tableNamePattern = Pattern.compile("^[a-zA-Z][a-zA-Z0-9_]{0,63}$");
+	public static String getSqlInjectTableName(String table) {
+		table = table.trim();
+		/**
+		 * 检验表名是否合法
+		 *
+		 * 表名只能由字母、数字和下划线组成。
+		 * 表名必须以字母开头。
+		 * 表名长度通常有限制，例如最多为 64 个字符。
+		 */
+		boolean isValidTableName = tableNamePattern.matcher(table).matches();
+		if (!isValidTableName) {
+			String errorMsg = "表名不合法，存在SQL注入风险!--->" + table;
+			log.error(errorMsg);
+			throw new JeecgSqlInjectionException(errorMsg);
+		}
+
+		//进一步验证是否存在SQL注入风险
+		filterContent(table);
+		return table;
+	}
+
+
+	/**
+	 * 返回查询字段
+	 * <p>
+	 * sql注入过滤处理，遇到注入关键字抛异常
+	 *
+	 * @param field
+	 */
+	static final Pattern fieldPattern = Pattern.compile("^[a-zA-Z0-9_]+$");
+	public static String getSqlInjectField(String field) {
+		field = field.trim();
+
+		if (field.contains(SymbolConstant.COMMA)) {
+			return getSqlInjectField(field.split(SymbolConstant.COMMA));
+		}
+		
+		/**
+		 * 校验表字段是否有效
+		 *
+		 * 字段定义只能是是字母 数字 下划线的组合（不允许有空格、转义字符串等）
+		 */
+		boolean isValidField = fieldPattern.matcher(field).matches();
+		if (!isValidField) {
+			String errorMsg = "字段不合法，存在SQL注入风险!--->" + field;
+			log.error(errorMsg);
+			throw new JeecgSqlInjectionException(errorMsg);
+		}
+
+		//进一步验证是否存在SQL注入风险
+		filterContent(field);
+		return field;
+	}
+
+	public static String getSqlInjectField(String... fields) {
+		for (String s : fields) {
+			getSqlInjectField(s);
+		}
+		return String.join(SymbolConstant.COMMA, fields);
 	}
 
 	/**
@@ -66,17 +141,19 @@ public class SqlInjectionUtil {
 		if (value == null || "".equals(value)) {
 			return;
 		}
+		// 校验sql注释 不允许有sql注释
+		checkSqlAnnotation(value);
 		// 统一转为小写
 		value = value.toLowerCase();
 		//SQL注入检测存在绕过风险 https://gitee.com/jeecg/jeecg-boot/issues/I4NZGE
-		value = value.replaceAll("/\\*.*\\*/","");
+		//value = value.replaceAll("/\\*.*\\*/","");
 
 		String[] xssArr = XSS_STR.split("\\|");
 		for (int i = 0; i < xssArr.length; i++) {
 			if (value.indexOf(xssArr[i]) > -1) {
 				log.error("请注意，存在SQL注入关键词---> {}", xssArr[i]);
 				log.error("请注意，值可能存在SQL注入风险!---> {}", value);
-				throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+				throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 			}
 		}
 		//update-begin-author:taoyan date:2022-7-13 for: 除了XSS_STR这些提前设置好的，还需要额外的校验比如 单引号
@@ -86,13 +163,13 @@ public class SqlInjectionUtil {
 				if (value.indexOf(xssArr2[i]) > -1) {
 					log.error("请注意，存在SQL注入关键词---> {}", xssArr2[i]);
 					log.error("请注意，值可能存在SQL注入风险!---> {}", value);
-					throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+					throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 				}
 			}
 		}
 		//update-end-author:taoyan date:2022-7-13 for: 除了XSS_STR这些提前设置好的，还需要额外的校验比如 单引号
 		if(Pattern.matches(SHOW_TABLES, value) || Pattern.matches(REGULAR_EXPRE_USER, value)){
-			throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+			throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 		}
 		return;
 	}
@@ -101,7 +178,7 @@ public class SqlInjectionUtil {
 	 * sql注入过滤处理，遇到注入关键字抛异常
 	 * @param values
 	 */
-	public static void filterContent(String[] values) {
+	public static void filterContent(String... values) {
 		filterContent(values, null);
 	}
 
@@ -117,16 +194,18 @@ public class SqlInjectionUtil {
 			if (value == null || "".equals(value)) {
 				return;
 			}
+			// 校验sql注释 不允许有sql注释
+			checkSqlAnnotation(value);
 			// 统一转为小写
 			value = value.toLowerCase();
 			//SQL注入检测存在绕过风险 https://gitee.com/jeecg/jeecg-boot/issues/I4NZGE
-			value = value.replaceAll("/\\*.*\\*/","");
+			//value = value.replaceAll("/\\*.*\\*/","");
 
 			for (int i = 0; i < xssArr.length; i++) {
 				if (value.indexOf(xssArr[i]) > -1) {
 					log.error("请注意，存在SQL注入关键词---> {}", xssArr[i]);
 					log.error("请注意，值可能存在SQL注入风险!---> {}", value);
-					throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+					throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 				}
 			}
 			//update-begin-author:taoyan date:2022-7-13 for: 除了XSS_STR这些提前设置好的，还需要额外的校验比如 单引号
@@ -136,13 +215,13 @@ public class SqlInjectionUtil {
 					if (value.indexOf(xssArr2[i]) > -1) {
 						log.error("请注意，存在SQL注入关键词---> {}", xssArr2[i]);
 						log.error("请注意，值可能存在SQL注入风险!---> {}", value);
-						throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+						throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 					}
 				}
 			}
 			//update-end-author:taoyan date:2022-7-13 for: 除了XSS_STR这些提前设置好的，还需要额外的校验比如 单引号
 			if(Pattern.matches(SHOW_TABLES, value) || Pattern.matches(REGULAR_EXPRE_USER, value)){
-				throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+				throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 			}
 		}
 		return;
@@ -157,25 +236,27 @@ public class SqlInjectionUtil {
 	 */
 	//@Deprecated
 	public static void specialFilterContentForDictSql(String value) {
-		String specialXssStr = " exec | insert | select | delete | update | drop | count | chr | mid | master | truncate | char | declare |;|+|user()";
+		String specialXssStr = " exec |extractvalue|updatexml|geohash|gtid_subset|gtid_subtract| insert | select | delete | update | drop | count | chr | mid | master | truncate | char | declare |;|+|user()";
 		String[] xssArr = specialXssStr.split("\\|");
 		if (value == null || "".equals(value)) {
 			return;
 		}
+		// 校验sql注释 不允许有sql注释
+		checkSqlAnnotation(value);
 		// 统一转为小写
 		value = value.toLowerCase();
 		//SQL注入检测存在绕过风险 https://gitee.com/jeecg/jeecg-boot/issues/I4NZGE
-		value = value.replaceAll("/\\*.*\\*/","");
+		//value = value.replaceAll("/\\*.*\\*/","");
 
 		for (int i = 0; i < xssArr.length; i++) {
 			if (value.indexOf(xssArr[i]) > -1 || value.startsWith(xssArr[i].trim())) {
 				log.error("请注意，存在SQL注入关键词---> {}", xssArr[i]);
 				log.error("请注意，值可能存在SQL注入风险!---> {}", value);
-				throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+				throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 			}
 		}
 		if(Pattern.matches(SHOW_TABLES, value) || Pattern.matches(REGULAR_EXPRE_USER, value)){
-			throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+			throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 		}
 		return;
 	}
@@ -189,26 +270,28 @@ public class SqlInjectionUtil {
      */
 	//@Deprecated
 	public static void specialFilterContentForOnlineReport(String value) {
-		String specialXssStr = " exec | insert | delete | update | drop | chr | mid | master | truncate | char | declare |user()";
+		String specialXssStr = " exec |extractvalue|updatexml|geohash|gtid_subset|gtid_subtract| insert | delete | update | drop | chr | mid | master | truncate | char | declare |user()";
 		String[] xssArr = specialXssStr.split("\\|");
 		if (value == null || "".equals(value)) {
 			return;
 		}
+		// 校验sql注释 不允许有sql注释
+		checkSqlAnnotation(value);
 		// 统一转为小写
 		value = value.toLowerCase();
 		//SQL注入检测存在绕过风险 https://gitee.com/jeecg/jeecg-boot/issues/I4NZGE
-		value = value.replaceAll("/\\*.*\\*/","");
+		//value = value.replaceAll("/\\*.*\\*/"," ");
 
 		for (int i = 0; i < xssArr.length; i++) {
 			if (value.indexOf(xssArr[i]) > -1 || value.startsWith(xssArr[i].trim())) {
 				log.error("请注意，存在SQL注入关键词---> {}", xssArr[i]);
 				log.error("请注意，值可能存在SQL注入风险!---> {}", value);
-				throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+				throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 			}
 		}
 
 		if(Pattern.matches(SHOW_TABLES, value) || Pattern.matches(REGULAR_EXPRE_USER, value)){
-			throw new RuntimeException("请注意，值可能存在SQL注入风险!--->" + value);
+			throw new JeecgSqlInjectionException("请注意，值可能存在SQL注入风险!--->" + value);
 		}
 		return;
 	}
@@ -255,5 +338,26 @@ public class SqlInjectionUtil {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * 校验是否有sql注释 
+	 * @return
+	 */
+	public static void checkSqlAnnotation(String str){
+		Matcher matcher = SQL_ANNOTATION.matcher(str);
+		if(matcher.find()){
+			String error = "请注意，值可能存在SQL注入风险---> \\*.*\\";
+			log.error(error);
+			throw new JeecgSqlInjectionException(error);
+		}
+		
+		// issues/4737 sys/duplicate/check SQL注入 #4737
+		Matcher sleepMatcher = FUN_SLEEP.matcher(str);
+		if(sleepMatcher.find()){
+			String error = "请注意，值可能存在SQL注入风险---> sleep";
+			log.error(error);
+			throw new JeecgSqlInjectionException(error);
+		}
 	}
 }

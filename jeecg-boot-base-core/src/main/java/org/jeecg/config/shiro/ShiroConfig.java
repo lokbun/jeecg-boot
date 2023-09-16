@@ -20,7 +20,6 @@ import org.jeecg.config.shiro.filters.CustomShiroFilterFactoryBean;
 import org.jeecg.config.shiro.filters.JwtFilter;
 import org.springframework.aop.framework.autoproxy.DefaultAdvisorAutoProxyCreator;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
@@ -66,7 +65,7 @@ public class ShiroConfig {
         Map<String, String> filterChainDefinitionMap = new LinkedHashMap<String, String>();
 
         //支持yml方式，配置拦截排除
-        if(jeecgBaseConfig.getShiro()!=null){
+        if(jeecgBaseConfig!=null && jeecgBaseConfig.getShiro()!=null){
             String shiroExcludeUrls = jeecgBaseConfig.getShiro().getExcludeUrls();
             if(oConvertUtils.isNotEmpty(shiroExcludeUrls)){
                 String[] permissionUrl = shiroExcludeUrls.split(",");
@@ -109,20 +108,18 @@ public class ShiroConfig {
         filterChainDefinitionMap.put("/**/*.pdf", "anon");
         filterChainDefinitionMap.put("/**/*.jpg", "anon");
         filterChainDefinitionMap.put("/**/*.png", "anon");
+        filterChainDefinitionMap.put("/**/*.gif", "anon");
         filterChainDefinitionMap.put("/**/*.ico", "anon");
-
-        // update-begin--Author:sunjianlei Date:20190813 for：排除字体格式的后缀
         filterChainDefinitionMap.put("/**/*.ttf", "anon");
         filterChainDefinitionMap.put("/**/*.woff", "anon");
         filterChainDefinitionMap.put("/**/*.woff2", "anon");
-        // update-begin--Author:sunjianlei Date:20190813 for：排除字体格式的后缀
 
         filterChainDefinitionMap.put("/druid/**", "anon");
         filterChainDefinitionMap.put("/swagger-ui.html", "anon");
         filterChainDefinitionMap.put("/swagger**/**", "anon");
         filterChainDefinitionMap.put("/webjars/**", "anon");
         filterChainDefinitionMap.put("/v2/**", "anon");
-
+        
         filterChainDefinitionMap.put("/sys/annountCement/show/**", "anon");
 
         //积木报表排除
@@ -143,12 +140,15 @@ public class ShiroConfig {
         filterChainDefinitionMap.put("/newsWebsocket/**", "anon");//CMS模块
         filterChainDefinitionMap.put("/vxeSocket/**", "anon");//JVxeTable无痕刷新示例
 
-
-        //性能监控  TODO 存在安全漏洞泄露TOEKN（durid连接池也有）
-        filterChainDefinitionMap.put("/actuator/**", "anon");
-
+        //性能监控——安全隐患泄露TOEKN（durid连接池也有）
+        //filterChainDefinitionMap.put("/actuator/**", "anon");
         //测试模块排除
         filterChainDefinitionMap.put("/test/seata/**", "anon");
+
+        // update-begin--author:liusq Date:20230522 for：[issues/4829]访问不存在的url时会提示Token失效，请重新登录呢
+        //错误路径排除
+        filterChainDefinitionMap.put("/error", "anon");
+        // update-end--author:liusq Date:20230522 for：[issues/4829]访问不存在的url时会提示Token失效，请重新登录呢
 
         // 添加自己的过滤器并且取名为jwt
         Map<String, Filter> filterMap = new HashMap<String, Filter>(1);

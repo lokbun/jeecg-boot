@@ -1,6 +1,7 @@
 package org.jeecg.config;
 
 import org.jeecg.config.vo.DomainUrl;
+import org.jeecg.config.vo.Elasticsearch;
 import org.jeecg.config.vo.Path;
 import org.jeecg.config.vo.Shiro;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -23,7 +24,11 @@ public class JeecgBaseConfig {
      * 需要加强校验的接口清单
      */
     private String signUrls;
-
+    /**
+     * 上传模式  
+     * 本地：local\Minio：minio\阿里云：alioss
+     */
+    private String uploadType;
     /**
      * 是否启用安全模式
      */
@@ -43,6 +48,23 @@ public class JeecgBaseConfig {
      * app: http://localhost:8051
      */
     private DomainUrl domainUrl;
+
+    /**
+     * 文件预览
+     */
+    private String fileViewDomain;
+     /**
+     * ES配置
+     */
+    private Elasticsearch elasticsearch;
+
+    public Elasticsearch getElasticsearch() {
+        return elasticsearch;
+    }
+
+    public void setElasticsearch(Elasticsearch elasticsearch) {
+        this.elasticsearch = elasticsearch;
+    }
 
     public Boolean getSafeMode() {
         return safeMode;
@@ -83,12 +105,28 @@ public class JeecgBaseConfig {
     public void setDomainUrl(DomainUrl domainUrl) {
         this.domainUrl = domainUrl;
     }
-
     public String getSignUrls() {
         return signUrls;
     }
 
     public void setSignUrls(String signUrls) {
         this.signUrls = signUrls;
+    }
+
+
+    public String getFileViewDomain() {
+        return fileViewDomain;
+    }
+
+    public void setFileViewDomain(String fileViewDomain) {
+        this.fileViewDomain = fileViewDomain;
+    }
+
+    public String getUploadType() {
+        return uploadType;
+    }
+
+    public void setUploadType(String uploadType) {
+        this.uploadType = uploadType;
     }
 }

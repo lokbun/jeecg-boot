@@ -10,6 +10,7 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.common.util.CommonUtils;
 import org.jeecg.common.util.RestUtil;
 import org.jeecg.common.util.TokenUtils;
+import org.jeecg.common.util.filter.FileTypeFilter;
 import org.jeecg.common.util.oConvertUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -66,7 +67,7 @@ public class CommonController {
      * @return
      */
     @PostMapping(value = "/upload")
-    public Result<?> upload(HttpServletRequest request, HttpServletResponse response) {
+    public Result<?> upload(HttpServletRequest request, HttpServletResponse response) throws Exception {
         Result<?> result = new Result<>();
         String savePath = "";
         String bizPath = request.getParameter("biz");
@@ -93,6 +94,9 @@ public class CommonController {
             }
         }
         if(CommonConstant.UPLOAD_TYPE_LOCAL.equals(uploadType)){
+            //update-begin-author:liusq date:20221102 for: 过滤上传文件类型
+            FileTypeFilter.fileTypeFilter(file);
+            //update-end-author:liusq date:20221102 for: 过滤上传文件类型
             //update-begin-author:lvdandan date:20200928 for:修改JEditor编辑器本地上传
             savePath = this.uploadLocal(file,bizPath);
             //update-begin-author:lvdandan date:20200928 for:修改JEditor编辑器本地上传
@@ -342,55 +346,6 @@ public class CommonController {
         String path = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
         String bestMatchPattern = (String) request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         return new AntPathMatcher().extractPathWithinPattern(bestMatchPattern, path);
-    }
-
-    /**
-     * 中转HTTP请求，解决跨域问题
-     *
-     * @param url 必填：请求地址
-     * @return
-     */
-    @RequestMapping("/transitRESTful")
-    public Result transitRestful(@RequestParam("url") String url, HttpServletRequest request) {
-        try {
-            ServletServerHttpRequest httpRequest = new ServletServerHttpRequest(request);
-            // 中转请求method、body
-            HttpMethod method = httpRequest.getMethod();
-            JSONObject params;
-            try {
-                params = JSON.parseObject(JSON.toJSONString(httpRequest.getBody()));
-            } catch (Exception e) {
-                params = new JSONObject();
-            }
-            // 中转请求问号参数
-            JSONObject variables = JSON.parseObject(JSON.toJSONString(request.getParameterMap()));
-            variables.remove("url");
-            // 在 headers 里传递Token
-            String token = TokenUtils.getTokenByRequest(request);
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("X-Access-Token", token);
-            // 发送请求
-            String httpUrl = URLDecoder.decode(url, "UTF-8");
-            ResponseEntity<String> response = RestUtil.request(httpUrl, method, headers , variables, params, String.class);
-            // 封装返回结果
-            Result<Object> result = new Result<>();
-            int statusCode = response.getStatusCodeValue();
-            result.setCode(statusCode);
-            result.setSuccess(statusCode == 200);
-            String responseBody = response.getBody();
-            try {
-                // 尝试将返回结果转为JSON
-                Object json = JSON.parse(responseBody);
-                result.setResult(json);
-            } catch (Exception e) {
-                // 转成JSON失败，直接返回原始数据
-                result.setResult(responseBody);
-            }
-            return result;
-        } catch (Exception e) {
-            log.debug("中转HTTP请求失败", e);
-            return Result.error(e.getMessage());
-        }
     }
 
 }

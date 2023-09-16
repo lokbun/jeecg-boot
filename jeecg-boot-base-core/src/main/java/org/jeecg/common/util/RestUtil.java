@@ -21,8 +21,9 @@ import java.util.Map;
 public class RestUtil {
 
     private static String domain = null;
-
-    public static String getDomain() {
+    private static String path = null;
+    
+    private static String getDomain() {
         if (domain == null) {
             domain = SpringContextUtils.getDomain();
             // issues/2959
@@ -36,9 +37,7 @@ public class RestUtil {
         return domain;
     }
 
-    public static String path = null;
-
-    public static String getPath() {
+    private static String getPath() {
         if (path == null) {
             path = SpringContextUtils.getApplicationContext().getEnvironment().getProperty("server.servlet.context-path");
         }

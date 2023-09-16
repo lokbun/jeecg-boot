@@ -1,5 +1,6 @@
 package org.jeecg.modules.system.controller;
 
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -10,15 +11,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.config.TenantContext;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.constant.CommonSendStatus;
 import org.jeecg.common.constant.WebsocketConst;
 import org.jeecg.common.system.query.QueryGenerator;
 import org.jeecg.common.system.util.JwtUtil;
 import org.jeecg.common.system.vo.LoginUser;
+import org.jeecg.common.util.DateUtils;
 import org.jeecg.common.util.RedisUtil;
 import org.jeecg.common.util.TokenUtils;
 import org.jeecg.common.util.oConvertUtils;
+import org.jeecg.config.mybatis.MybatisPlusSaasConfig;
+import org.jeecg.modules.message.enums.RangeDateEnum;
 import org.jeecg.modules.message.websocket.WebSocket;
 import org.jeecg.modules.system.entity.SysAnnouncement;
 import org.jeecg.modules.system.entity.SysAnnouncementSend;
@@ -45,10 +50,8 @@ import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.jeecg.common.constant.CommonConstant.ANNOUNCEMENT_SEND_STATUS_1;
 
@@ -70,9 +73,9 @@ public class SysAnnouncementController {
 	@Resource
     private WebSocket webSocket;
 	@Autowired
-	ThirdAppWechatEnterpriseServiceImpl wechatEnterpriseService;
+    ThirdAppWechatEnterpriseServiceImpl wechatEnterpriseService;
 	@Autowired
-	ThirdAppDingtalkServiceImpl dingtalkService;
+    ThirdAppDingtalkServiceImpl dingtalkService;
 	@Autowired
 	private SysBaseApiImpl sysBaseApi;
 	@Autowired
@@ -92,6 +95,12 @@ public class SysAnnouncementController {
 									  @RequestParam(name="pageNo", defaultValue="1") Integer pageNo,
 									  @RequestParam(name="pageSize", defaultValue="10") Integer pageSize,
 									  HttpServletRequest req) {
+		//------------------------------------------------------------------------------------------------
+		//是否开启系统管理模块的多租户数据隔离【SAAS多租户模式】
+		if(MybatisPlusSaasConfig.OPEN_SYSTEM_TENANT_CONTROL){
+			sysAnnouncement.setTenantId(oConvertUtils.getInt(TenantContext.getTenant(), 0));
+		}
+		//------------------------------------------------------------------------------------------------
 		Result<IPage<SysAnnouncement>> result = new Result<IPage<SysAnnouncement>>();
 		sysAnnouncement.setDelFlag(CommonConstant.DEL_FLAG_0.toString());
 		QueryWrapper<SysAnnouncement> queryWrapper = QueryGenerator.initQueryWrapper(sysAnnouncement, req.getParameterMap());
@@ -506,4 +515,72 @@ public class SysAnnouncementController {
         return modelAndView;
     }
 
+	/**
+	 * 【vue3用】 消息列表查询
+	 * @param fromUser
+	 * @param beginDate
+	 * @param endDate
+	 * @param pageNo
+	 * @param pageSize
+	 * @return
+	 */
+	@RequestMapping(value = "/vue3List", method = RequestMethod.GET)
+	public Result<List<SysAnnouncement>> vue3List(@RequestParam(name="fromUser", required = false) String fromUser,
+												  @RequestParam(name="starFlag", required = false) String starFlag,
+                                                  @RequestParam(name="rangeDateKey", required = false) String rangeDateKey,
+                                                  @RequestParam(name="beginDate", required = false) String beginDate, @RequestParam(name="endDate", required = false) String endDate,
+                                                  @RequestParam(name="pageNo", defaultValue="1") Integer pageNo, @RequestParam(name="pageSize", defaultValue="10") Integer pageSize) {
+		// 后台获取开始时间/结束时间
+		Date bd=null, ed=null;
+		if(RangeDateEnum.ZDY.getKey().equals(rangeDateKey)){
+			if(oConvertUtils.isNotEmpty(beginDate)){
+				bd = DateUtils.parseDatetime(beginDate);
+			}
+			if(oConvertUtils.isNotEmpty(endDate)){
+				ed = DateUtils.parseDatetime(endDate);
+			}
+		}else{
+			Date[] arr = RangeDateEnum.getRangeArray(rangeDateKey);
+			if(arr!=null){
+				bd = arr[0];
+				ed = arr[1];
+			}
+		}
+		List<SysAnnouncement> ls = this.sysAnnouncementService.querySysMessageList(pageSize, pageNo, fromUser, starFlag, bd, ed);
+		//查询出来的消息全部设置为已读
+		if(ls!=null && ls.size()>0){
+			String readed = "1";
+			List<String> annoceIdList = ls.stream().filter(item->!readed.equals(item.getReadFlag())).map(item->item.getId()).collect(Collectors.toList());
+			if(annoceIdList!=null && annoceIdList.size()>0){
+				sysAnnouncementService.updateReaded(annoceIdList);
+			}
+		}
+		//update-begin-author:taoyan date:2022-9-25 for: VUEN-2261【移动端 系统消息】通知公告显示7条消息，点进去查看后，仍然显示7条；其他地方已读后，未读条数减少
+		JSONObject obj = new JSONObject();
+		obj.put(WebsocketConst.MSG_CMD, WebsocketConst.CMD_USER);
+		LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+		webSocket.sendMessage(sysUser.getId(), obj.toJSONString());
+		//update-end-author:taoyan date:2022-9-25 for: VUEN-2261【移动端 系统消息】通知公告显示7条消息，点进去查看后，仍然显示7条；其他地方已读后，未读条数减少
+		return Result.ok(ls);
+	}
+
+
+    /**
+     * 根据用户id获取最新一条消息发送时间(创建时间)
+     * @param userId
+     * @return
+     */
+	@GetMapping("/getLastAnnountTime")
+	public Result<Page<SysAnnouncementSend>> getLastAnnountTime(@RequestParam(name = "userId") String userId){
+        Result<Page<SysAnnouncementSend>> result = new Result<>();
+        Page<SysAnnouncementSend> page = new Page<>(1,1);
+        LambdaQueryWrapper<SysAnnouncementSend> query = new LambdaQueryWrapper<>();
+        query.eq(SysAnnouncementSend::getUserId,userId);
+        query.select(SysAnnouncementSend::getCreateTime);
+        query.orderByDesc(SysAnnouncementSend::getCreateTime);
+        Page<SysAnnouncementSend> pageList = sysAnnouncementSendService.page(page, query);
+        result.setSuccess(true);
+        result.setResult(pageList);
+        return result;
+    }
 }

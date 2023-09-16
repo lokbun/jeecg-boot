@@ -7,7 +7,7 @@ import com.aliyun.oss.model.CannedAccessControlList;
 import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.PutObjectResult;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.tomcat.util.http.fileupload.FileItemStream;
+import org.apache.commons.fileupload.FileItemStream;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.constant.SymbolConstant;
 import org.jeecg.common.util.CommonUtils;
@@ -96,7 +96,11 @@ public class OssBootUtil {
      * @param fileDir 文件保存目录
      * @return oss 中的相对文件路径
      */
-    public static String upload(MultipartFile file, String fileDir,String customBucket) {
+    public static String upload(MultipartFile file, String fileDir,String customBucket) throws Exception {
+        //update-begin-author:liusq date:20210809 for: 过滤上传文件类型
+        FileTypeFilter.fileTypeFilter(file);
+        //update-end-author:liusq date:20210809 for: 过滤上传文件类型
+
         String filePath = null;
         initOss(endPoint, accessKeyId, accessKeySecret);
         StringBuilder fileUrl = new StringBuilder();
@@ -114,9 +118,6 @@ public class OssBootUtil {
             if("" == orgName){
               orgName=file.getName();
             }
-            //update-begin-author:liusq date:20210809 for: 过滤上传文件类型
-            FileTypeFilter.fileTypeFilter(file);
-            //update-end-author:liusq date:20210809 for: 过滤上传文件类型
             orgName = CommonUtils.getFileName(orgName);
             String fileName = orgName.indexOf(".")==-1
                               ?orgName + "_" + System.currentTimeMillis()
@@ -141,10 +142,10 @@ public class OssBootUtil {
                 log.info("------OSS文件上传成功------" + fileUrl);
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            log.error(e.getMessage(),e);
             return null;
         }catch (Exception e) {
-            e.printStackTrace();
+            log.error(e.getMessage(),e);
             return null;
         }
         return filePath;
@@ -169,7 +170,7 @@ public class OssBootUtil {
      * @param fileDir
      * @return
      */
-    public static String upload(MultipartFile file, String fileDir) {
+    public static String upload(MultipartFile file, String fileDir) throws Exception {
         return upload(file, fileDir,null);
     }
 
@@ -235,6 +236,8 @@ public class OssBootUtil {
         } else {
             bucketUrl = "https://" + newBucket + "." + endPoint + SymbolConstant.SINGLE_SLASH;
         }
+        //TODO 暂时不允许删除云存储的文件
+        //initOss(endPoint, accessKeyId, accessKeySecret);
         url = url.replace(bucketUrl,"");
         ossClient.deleteObject(newBucket, url);
     }
@@ -296,10 +299,13 @@ public class OssBootUtil {
             //update-end---author:liusq  Date:20220120  for：替换objectName前缀，防止key不一致导致获取不到文件----
             if(ossClient.doesObjectExist(bucketName,objectName)){
                 URL url = ossClient.generatePresignedUrl(bucketName,objectName,expires);
-                return URLDecoder.decode(url.toString(),"UTF-8");
+                //log.info("原始url : {}", url.toString());
+                //log.info("decode url : {}", URLDecoder.decode(url.toString(), "UTF-8"));
+                //【issues/4023】问题 oss外链经过转编码后，部分无效，大概在三分一；无需转编码直接返回即可 #4023
+                return url.toString();
             }
         }catch (Exception e){
-            log.info("文件路径获取失败" + e.getMessage());
+            log.info("文件路径获取失败" + e.getMessage()); 
         }
         return null;
     }

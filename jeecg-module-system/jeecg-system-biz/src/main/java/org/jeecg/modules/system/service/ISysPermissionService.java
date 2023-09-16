@@ -18,9 +18,9 @@ import com.baomidou.mybatisplus.extension.service.IService;
  * @since 2018-12-21
  */
 public interface ISysPermissionService extends IService<SysPermission> {
-	/**
-	 * 切换vue3菜单
-	 */
+    /**
+     * 切换vue3菜单
+     */
 	public void switchVue3Menu();
 	
     /**
@@ -93,4 +93,20 @@ public interface ISysPermissionService extends IService<SysPermission> {
 	 * @return
 	 */
 	public boolean hasPermission(String username, String url);
+
+	/**
+	 * 查询部门权限数据
+	 * @param departId
+	 * @return
+	 */
+	List<SysPermission> queryDepartPermissionList(String departId);
+
+	/**
+	 * 检测地址是否存在(聚合路由的情况下允许使用子菜单路径作为父菜单的路由地址)
+	 * @param id
+	 * @param url
+	 * @param alwaysShow 是否是聚合路由
+	 * @return
+	 */
+	 boolean checkPermDuplication(String id, String url,Boolean alwaysShow);
 }
