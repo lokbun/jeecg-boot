@@ -14,6 +14,7 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.constant.CacheConstant;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.constant.SymbolConstant;
+import org.jeecg.common.constant.enums.DySmsEnum;
 import org.jeecg.common.system.util.JwtUtil;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.common.util.*;
@@ -37,6 +38,7 @@ import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @Author scott
@@ -60,12 +62,9 @@ public class LoginController {
 	@Autowired
     private ISysDepartService sysDepartService;
 	@Autowired
-	private ISysTenantService sysTenantService;
-	@Autowired
     private ISysDictService sysDictService;
 	@Resource
 	private BaseCommonService baseCommonService;
-
 	@Autowired
 	private JeecgBaseConfig jeecgBaseConfig;
 
@@ -73,7 +72,7 @@ public class LoginController {
 
 	@ApiOperation("登录接口")
 	@RequestMapping(value = "/login", method = RequestMethod.POST)
-	public Result<JSONObject> login(@RequestBody SysLoginModel sysLoginModel){
+	public Result<JSONObject> login(@RequestBody SysLoginModel sysLoginModel, HttpServletRequest request){
 		Result<JSONObject> result = new Result<JSONObject>();
 		String username = sysLoginModel.getUsername();
 		String password = sysLoginModel.getPassword();
@@ -133,7 +132,7 @@ public class LoginController {
 		}
 				
 		//用户登录信息
-		userInfo(sysUser, result);
+		userInfo(sysUser, result, request);
 		//update-begin--Author:liusq  Date:20210126  for：登录成功，删除redis中的验证码
 		redisUtil.del(realKey);
 		//update-begin--Author:liusq  Date:20210126  for：登录成功，删除redis中的验证码
@@ -159,10 +158,10 @@ public class LoginController {
 			JSONObject obj=new JSONObject();
 
 			//update-begin---author:scott ---date:2022-06-20  for：vue3前端，支持自定义首页-----------
-			String version = request.getHeader(CommonConstant.VERSION);
+			String vue3Version = request.getHeader(CommonConstant.VERSION);
 			//update-begin---author:liusq ---date:2022-06-29  for：接口返回值修改，同步修改这里的判断逻辑-----------
-			SysRoleIndex roleIndex = sysUserService.getDynamicIndexByUserRole(username, version);
-			if (oConvertUtils.isNotEmpty(version) && roleIndex != null && oConvertUtils.isNotEmpty(roleIndex.getUrl())) {
+			SysRoleIndex roleIndex = sysUserService.getDynamicIndexByUserRole(username, vue3Version);
+			if (oConvertUtils.isNotEmpty(vue3Version) && roleIndex != null && oConvertUtils.isNotEmpty(roleIndex.getUrl())) {
 				String homePath = roleIndex.getUrl();
 				if (!homePath.startsWith(SymbolConstant.SINGLE_SLASH)) {
 					homePath = SymbolConstant.SINGLE_SLASH + homePath;
@@ -174,6 +173,7 @@ public class LoginController {
 			
 			obj.put("userInfo",sysUser);
 			obj.put("sysAllDictItems", sysDictService.queryAllDictItems());
+			
 			result.setResult(obj);
 			result.success("");
 		}
@@ -286,6 +286,7 @@ public class LoginController {
 		String orgCode= user.getOrgCode();
 		//获取登录租户
 		Integer tenantId = user.getLoginTenantId();
+		//设置用户登录部门和登录租户
 		this.sysUserService.updateUserDepart(username, orgCode,tenantId);
 		SysUser sysUser = sysUserService.getUserByName(username);
 		JSONObject obj = new JSONObject();
@@ -397,7 +398,7 @@ public class LoginController {
 	 */
 	@ApiOperation("手机号登录接口")
 	@PostMapping("/phoneLogin")
-	public Result<JSONObject> phoneLogin(@RequestBody JSONObject jsonObject) {
+	public Result<JSONObject> phoneLogin(@RequestBody JSONObject jsonObject, HttpServletRequest request) {
 		Result<JSONObject> result = new Result<JSONObject>();
 		String phone = jsonObject.getString("mobile");
 		//update-begin-author:taoyan date:2022-11-7 for: issues/4109 平台用户登录失败锁定用户
@@ -427,7 +428,7 @@ public class LoginController {
 			return result;
 		}
 		//用户信息
-		userInfo(sysUser, result);
+		userInfo(sysUser, result, request);
 		//添加日志
 		baseCommonService.addLog("用户名: " + sysUser.getUsername() + ",登录成功！", CommonConstant.LOG_TYPE_1, null);
 
@@ -442,7 +443,7 @@ public class LoginController {
 	 * @param result
 	 * @return
 	 */
-	private Result<JSONObject> userInfo(SysUser sysUser, Result<JSONObject> result) {
+	private Result<JSONObject> userInfo(SysUser sysUser, Result<JSONObject> result, HttpServletRequest request) {
 		String username = sysUser.getUsername();
 		String syspassword = sysUser.getPassword();
 		// 获取用户部门信息
@@ -482,7 +483,15 @@ public class LoginController {
 			// update-end--Author:wangshuai Date:20200805 for：如果用戶为选择部门，数据库为存在上一次登录部门，则取一条存进去
 			obj.put("multi_depart", 2);
 		}
-		obj.put("sysAllDictItems", sysDictService.queryAllDictItems());
+
+		//update-begin---author:scott ---date:2024-01-05  for：【QQYUN-7802】前端在登录时加载了两次数据字典，建议优化下，避免数据字典太多时可能产生的性能问题 #956---
+		// login接口，在vue3前端下不加载字典数据，vue2下加载字典
+		String vue3Version = request.getHeader(CommonConstant.VERSION);
+		if(oConvertUtils.isEmpty(vue3Version)){
+			obj.put("sysAllDictItems", sysDictService.queryAllDictItems());
+		}
+		//end-begin---author:scott ---date:2024-01-05  for：【QQYUN-7802】前端在登录时加载了两次数据字典，建议优化下，避免数据字典太多时可能产生的性能问题 #956---
+		
 		result.setResult(obj);
 		result.success("登录成功");
 		return result;
@@ -728,7 +737,7 @@ public class LoginController {
 			val = Integer.parseInt(failTime.toString());
 		}
 		// 10分钟
-		redisUtil.set(key, ++val, 600);
+		redisUtil.set(key, ++val, 10);
 	}
 
 }
