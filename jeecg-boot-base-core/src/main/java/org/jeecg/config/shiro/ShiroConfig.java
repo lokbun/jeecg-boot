@@ -1,5 +1,6 @@
 package org.jeecg.config.shiro;
 
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.apache.shiro.mgt.DefaultSessionStorageEvaluator;
@@ -15,8 +16,12 @@ import org.jeecg.common.util.oConvertUtils;
 import org.jeecg.config.JeecgBaseConfig;
 import org.jeecg.config.shiro.filters.CustomShiroFilterFactoryBean;
 import org.jeecg.config.shiro.filters.JwtFilter;
+import org.springframework.aop.framework.Advised;
 import org.springframework.aop.framework.autoproxy.DefaultAdvisorAutoProxyCreator;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
@@ -25,11 +30,16 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.filter.DelegatingFilterProxy;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.JedisCluster;
 
 import javax.annotation.Resource;
+import javax.servlet.DispatcherType;
 import javax.servlet.Filter;
+import java.lang.reflect.Method;
+import java.time.Duration;
 import java.util.*;
 
 /**
@@ -51,6 +61,8 @@ public class ShiroConfig {
     @Autowired(required = false)
     private RedisProperties redisProperties;
 
+    @Autowired
+    private ApplicationContext ctx;
     /**
      * Filter Chain定义说明
      *
@@ -165,6 +177,14 @@ public class ShiroConfig {
         // 企业微信证书排除
         filterChainDefinitionMap.put("/WW_verify*", "anon");
 
+//        // 通过注解免登录url
+//        List<String> ignoreAuthUrlList = collectIgnoreAuthUrl(ctx);
+//        if (!CollectionUtils.isEmpty(ignoreAuthUrlList)) {
+//            for (String url : ignoreAuthUrlList) {
+//                filterChainDefinitionMap.put(url, "anon");
+//            }
+//        }
+
         // 添加自己的过滤器并且取名为jwt
         Map<String, Filter> filterMap = new HashMap<String, Filter>(1);
         //如果cloudServer为空 则说明是单体 需要加载跨域配置【微服务跨域切换】
@@ -180,6 +200,20 @@ public class ShiroConfig {
         shiroFilterFactoryBean.setFilterChainDefinitionMap(filterChainDefinitionMap);
         return shiroFilterFactoryBean;
     }
+
+    //update-begin---author:chenrui ---date:20240126  for：【QQYUN-7932】AI助手------------
+    @Bean
+    public FilterRegistrationBean shiroFilterRegistration() {
+        FilterRegistrationBean registration = new FilterRegistrationBean();
+        registration.setFilter(new DelegatingFilterProxy("shiroFilterFactoryBean"));
+        registration.setEnabled(true);
+        registration.addUrlPatterns("/*");
+        //支持异步
+        registration.setAsyncSupported(true);
+        registration.setDispatcherTypes(DispatcherType.REQUEST, DispatcherType.ASYNC);
+        return registration;
+    }
+    //update-end---author:chenrui ---date:20240126  for：【QQYUN-7932】AI助手------------
 
     @Bean("securityManager")
     public DefaultWebSecurityManager securityManager(ShiroRealm myRealm) {
@@ -301,6 +335,69 @@ public class ShiroConfig {
             manager = redisManager;
         }
         return manager;
+    }
+
+
+    @SneakyThrows
+    public List<String> collectIgnoreAuthUrl(ApplicationContext context) {
+        List<String> ignoreAuthUrls = new ArrayList<>();
+        Map<String, Object> controllers = context.getBeansWithAnnotation(RestController.class);
+        for (Object bean : controllers.values()) {
+            if (!(bean instanceof Advised)) {
+                continue;
+            }
+            Class<?> beanClass = ((Advised) bean).getTargetSource().getTarget().getClass();
+            RequestMapping base = beanClass.getAnnotation(RequestMapping.class);
+            String[] baseUrl = {};
+            if (Objects.nonNull(base)) {
+                baseUrl = base.value();
+            }
+            Method[] methods = beanClass.getDeclaredMethods();
+
+            for (Method method : methods) {
+                if (method.isAnnotationPresent(IgnoreAuth.class) && method.isAnnotationPresent(RequestMapping.class)) {
+                    RequestMapping requestMapping = method.getAnnotation(RequestMapping.class);
+                    String[] uri = requestMapping.value();
+                    ignoreAuthUrls.addAll(rebuildUrl(baseUrl, uri));
+                } else if (method.isAnnotationPresent(IgnoreAuth.class) && method.isAnnotationPresent(GetMapping.class)) {
+                    GetMapping requestMapping = method.getAnnotation(GetMapping.class);
+                    String[] uri = requestMapping.value();
+                    ignoreAuthUrls.addAll(rebuildUrl(baseUrl, uri));
+                } else if (method.isAnnotationPresent(IgnoreAuth.class) && method.isAnnotationPresent(PostMapping.class)) {
+                    PostMapping requestMapping = method.getAnnotation(PostMapping.class);
+                    String[] uri = requestMapping.value();
+                    ignoreAuthUrls.addAll(rebuildUrl(baseUrl, uri));
+                } else if (method.isAnnotationPresent(IgnoreAuth.class) && method.isAnnotationPresent(PutMapping.class)) {
+                    PutMapping requestMapping = method.getAnnotation(PutMapping.class);
+                    String[] uri = requestMapping.value();
+                    ignoreAuthUrls.addAll(rebuildUrl(baseUrl, uri));
+                } else if (method.isAnnotationPresent(IgnoreAuth.class) && method.isAnnotationPresent(DeleteMapping.class)) {
+                    DeleteMapping requestMapping = method.getAnnotation(DeleteMapping.class);
+                    String[] uri = requestMapping.value();
+                    ignoreAuthUrls.addAll(rebuildUrl(baseUrl, uri));
+                } else if (method.isAnnotationPresent(IgnoreAuth.class) && method.isAnnotationPresent(PatchMapping.class)) {
+                    PatchMapping requestMapping = method.getAnnotation(PatchMapping.class);
+                    String[] uri = requestMapping.value();
+                    ignoreAuthUrls.addAll(rebuildUrl(baseUrl, uri));
+                }
+            }
+        }
+
+        return ignoreAuthUrls;
+    }
+
+    private List<String> rebuildUrl(String[] bases, String[] uris) {
+        List<String> urls = new ArrayList<>();
+        for (String base : bases) {
+            for (String uri : uris) {
+                urls.add(prefix(base)+prefix(uri));
+            }
+        }
+        return urls;
+    }
+
+    private String prefix(String seg) {
+        return seg.startsWith("/") ? seg : "/"+seg;
     }
 
 }
